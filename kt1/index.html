@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Status</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/5.0.14/signalr.min.js"></script>
+    <style>
+        .online { color: green; }
+        .offline { color: red; }
+    </style>
+</head>
+<body>
+    <h1>User Status</h1>
+    <ul id="userList"></ul>
+
+    <script>
+        const connection = new signalR.HubConnectionBuilder()
+            .withUrl("http://localhost:5044/userhub") 
+            .build();
+
+    
+        connection.on("ReceiveUserStatus", (userId, isOnline) => {
+            const userElement = document.getElementById(`user-${userId}`);
+            if (userElement) {
+                userElement.className = isOnline ? 'online' : 'offline';
+            }
+        });
+    
+        async function fetchUsers() {
+    try {
+        const response = await fetch('http://localhost:5044/api/v1/users'); 
+        if (!response.ok) {
+            throw new Error('Failed to fetch users');
+        }
+        const users = await response.json();
+
+        const userList = document.getElementById('userList');
+        userList.innerHTML = '';
+
+        users.forEach(user => {
+            const li = document.createElement('li');
+            li.id = `user-${user.id}`;
+            li.textContent = user.name;
+            li.className = user.isOnline ? 'online' : 'offline';
+            userList.appendChild(li);
+        });
+    } catch (error) {
+        console.error('Error fetching users:', error);
+    }
+}
+
+    
+        connection.start()
+            .then(() => {
+                console.log("Connected to SignalR hub.");
+                fetchUsers();
+            })
+            .catch(err => console.error('SignalR connection error:', err.toString()));
+    </script>
+    
+</body>
+</html>
