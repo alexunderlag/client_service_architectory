@@ -10,22 +10,18 @@ import time
 
 # Проверка, решал ли пользователь этот вопрос раньше
 def has_user_answered_question(user_id, question_id):
-    connection = get_connection()
-    try:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT COUNT(*) FROM passedquestions WHERE user_id = %s AND question_id = %s", (user_id, question_id))
-            answered = cursor.fetchone()['COUNT(*)'] > 0
-        return answered
-    except pymysql.Error as e:
-        logger.error(f"Database error in has_user_answered_question: {e}", exc_info=True)
-        return False
-    finally:
-        close_connection(connection)
+    connection = create_connection()
+    cursor = connection.cursor()
+    cursor.execute("SELECT COUNT(*) FROM passedquestions WHERE user_id = %s AND question_id = %s", (user_id, question_id))
+    answered = cursor.fetchone()['COUNT(*)'] > 0
+    cursor.close()
+    connection.close()
+    return answered
 
 # Настройка логгирования
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    handlers=[logging.FileHandler("bot.log", encoding='utf-8'),
+                    handlers=[logging.FileHandler("bot.log"),
                               logging.StreamHandler()])
 
 logger = logging.getLogger(__name__)
@@ -49,30 +45,12 @@ def create_connection():
     except Exception as e:
         logger.error(f"Error in create_connection: {e}", exc_info=True)
         return None
-    
-connection_pool = MySQLdb.pool.Pool(
-    host="localhost",
-    user="root",
-    password="1357924680qQ",  # ВНИМАНИЕ: Храните пароль в переменных окружения!
-    database="it_bot",
-    cursorclass=pymysql.cursors.DictCursor,
-    pool_size=5,
-    pool_reset=True
-)
-
-def get_connection():
-    return connection_pool.connection()
-
-def close_connection(connection):
-    if connection:
-        connection.close()
-
-
 
 user_questions = {}
 user_complaints = {}
 user_messages = {}
 MAX_MESSAGES_TO_DELETE = 100
+user_cache = {}
 
 # Обработчик команды /start
 @bot.message_handler(commands=['start'])
@@ -90,15 +68,10 @@ def handle_start(message):
 
 # Удаление сообщений
 def delete_message(chat_id, message_id):
-  try:
-    bot.delete_message(chat_id, message_id)
-  except telebot.apihelper.ApiTelegramException as e:
-    if e.error_code == 400 and "message to delete not found" in e.description:
-      logger.warning(f"Message {message_id} not found, it might have already been deleted.")
-    else:
-      logger.error(f"Error deleting message {message_id}: {e}", exc_info=True)
-  except Exception as e:
-    logger.error(f"Error deleting message {message_id}: {e}", exc_info=True)
+    try:
+        bot.delete_message(chat_id, message_id)
+    except Exception as e:
+        logger.error(f"Error deleting message {message_id} for chat {chat_id}: {e}", exc_info=True)
 
 def delete_last_message(chat_id):
     if chat_id in user_messages and user_messages[chat_id]:
@@ -162,48 +135,50 @@ def handle_back_to_questions(call):
         logger.error(f"Error in handle_back_to_questions: {e}", exc_info=True)
         send_message(call.message.chat.id, "Произошла ошибка. Пожалуйста, попробуйте снова.")
 def save_complaint(user_id, question_id, complaint_text):
-    connection = get_connection()
     try:
-        with connection.cursor() as cursor:
+        connection = create_connection()
+        if connection:
+            cursor = connection.cursor()
             cursor.execute("INSERT INTO complaints (user_id, question_id, complaint_text, complaint_date) VALUES (%s, %s, %s, %s)",
                            (user_id, question_id, complaint_text, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        connection.commit()
-        logger.info(f"Complaint saved: user_id={user_id}, question_id={question_id}")
-    except pymysql.Error as e:
-        logger.error(f"Database error in save_complaint: {e}", exc_info=True)
-    finally:
-        close_connection(connection)
+            connection.commit()
+            cursor.close()
+            connection.close()
+    except Exception as e:
+        logger.error(f"Error in save_complaint: {e}", exc_info=True)
 
 # Регистрация пользователя
 def register_user(telegram_id):
-    connection = get_connection()
     try:
-        with connection.cursor() as cursor:
+        connection = create_connection()
+        if connection:
+            cursor = connection.cursor()
             cursor.execute("INSERT INTO users (username, registration_date, rating, correct_answers_count, incorrect_answers_count, show_nickname, show_correct_answers) VALUES (%s, %s, %s, %s, %s, %s, %s)",
                            (telegram_id, datetime.now().strftime('%Y-%m-%d'), 0, 0, 0, True, True))
-        connection.commit()
-        logger.info(f"User registered: {telegram_id}")
-    except pymysql.Error as e:
-        logger.error(f"Database error in register_user: {e}", exc_info=True)
-    finally:
-        close_connection(connection)
+            connection.commit()
+            print(f"User registered: {telegram_id}")
+            cursor.close()
+            connection.close()
+    except Exception as e:
+        logger.error(f"Error in register_user: {e}", exc_info=True)
 
 def get_user_id(telegram_id):
-    connection = get_connection()
     try:
-        with connection.cursor() as cursor:
+        connection = create_connection()
+        if connection:
+            cursor = connection.cursor()
             cursor.execute("SELECT user_id FROM users WHERE username = %s", (telegram_id,))
             result = cursor.fetchone()
-        if result:
-            logger.info(f"User ID for telegram_id {telegram_id}: {result['user_id']}")
-            return result['user_id']
+            cursor.close()
+            connection.close()
+            if result:
+                logger.info(f"User ID for telegram_id {telegram_id}: {result['user_id']}")
+                return result['user_id']
         logger.info(f"No user found for telegram_id {telegram_id}")
         return None
-    except pymysql.Error as e:
-        logger.error(f"Database error in get_user_id: {e}", exc_info=True)
+    except Exception as e:
+        logger.error(f"Error in get_user_id: {e}", exc_info=True)
         return None
-    finally:
-        close_connection(connection)
 
 # Обработчик главного меню
 @bot.message_handler(func=lambda message: message.text in ['Категории', 'Профиль', 'Админка', 'Добавить вопрос', 'Донат'])
@@ -228,11 +203,11 @@ def handle_main_menu(message):
 def generate_categories_markup():
     try:
         markup = types.InlineKeyboardMarkup(row_width=2)
-        connection = get_connection()
+        connection = create_connection()
         if connection:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT category_name FROM categories")
-                categories = cursor.fetchall()
+            cursor = connection.cursor()
+            cursor.execute("SELECT category_name FROM categories")
+            categories = cursor.fetchall()
             buttons = []
             for category in categories:
                 category_name = category['category_name']
@@ -241,12 +216,12 @@ def generate_categories_markup():
             for i in range(0, len(buttons), 2):
                 markup.row(*buttons[i:i+2])
             markup.add(types.InlineKeyboardButton('Назад', callback_data='back_to_main_menu'))
+            cursor.close()
+            connection.close()
         return markup
-    except pymysql.Error as e:
-        logger.error(f"Database error in generate_categories_markup: {e}", exc_info=True)
+    except Exception as e:
+        logger.error(f"Error in generate_categories_markup: {e}", exc_info=True)
         return types.InlineKeyboardMarkup()
-    finally:
-        close_connection(connection)
 
 
 def get_profile_text(user_id):
@@ -284,7 +259,7 @@ def send_message(chat_id, text, reply_markup=None, parse_mode=None, is_complaint
         message = bot.send_message(chat_id, text, reply_markup=reply_markup, parse_mode=parse_mode)
         if chat_id not in user_messages:
             user_messages[chat_id] = []
-
+        
         if is_complaint_confirmation:
             for i, (msg_type, msg_id) in enumerate(user_messages[chat_id]):
                 if msg_type == "complaint_confirmation":
@@ -297,8 +272,6 @@ def send_message(chat_id, text, reply_markup=None, parse_mode=None, is_complaint
         return message
     except Exception as e:
         logger.error(f"Error sending message: {e}", exc_info=True)
-
-        
 # Обработчик кнопки "Назад" в главном меню
 @bot.message_handler(func=lambda message: message.text == 'Назад')
 def handle_back_in_main_menu(message):
@@ -961,8 +934,8 @@ def handle_categories(call):
         delete_all_messages(call.message.chat.id)  # Удаляем все сообщения перед отображением категорий
         send_message(call.message.chat.id, "Выберите категорию:", reply_markup=generate_categories_markup())
     except Exception as e:
-        logger.error(f"Error in handle_categories: {e}", exc_info=True)
-        send_message(call.message.chat.id, "Произошла ошибка. Пожалуйста, попробуйте снова.")
+        logger.error(f"Error in handle_categories for user {call.from_user.id}: {e}", exc_info=True)
+        send_message(call.message.chat.id, "Произошла ошибка при обработке категорий. Пожалуйста, попробуйте снова.")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('toggle_'))
 def handle_toggle_setting(call):
@@ -983,8 +956,9 @@ def handle_back_to_main_menu(call):
         delete_all_messages(chat_id)
         send_message(chat_id, "<B>Айтишечка Квиз Бот</B>\nДобро пожаловать бот работает в тестовом режиме:", reply_markup=generate_inline_main_menu(), parse_mode="html")
     except Exception as e:
-        logger.error(f"Error in handle_back_to_main_menu: {e}", exc_info=True)
-        send_message(chat_id, "Произошла ошибка. Пожалуйста, попробуйте снова.")
+        logger.error(f"Error in handle_back_to_main_menu for user {call.from_user.id}: {e}", exc_info=True)
+        send_message(chat_id, "Произошла ошибка при возврате в главное меню. Пожалуйста, попробуйте снова.")
+        
 def set_user_category(user_id, category_id):
     try:
         connection = create_connection()
@@ -1088,9 +1062,11 @@ while True:
         if e.error_code == 409:
             logger.error("Conflict detected: another bot instance is running. Exiting.")
             break
+        elif e.error_code == 429:
+            logger.warning("Rate limit exceeded. Waiting before retrying.")
+            time.sleep(5)  # Спим перед повторной попыткой
         else:
             logger.error(f"Bot polling error: {e}", exc_info=True)
             time.sleep(0.25)
     except Exception as e:
         logger.error(f"Bot polling error: {e}", exc_info=True)
-        time.sleep(0.25)
