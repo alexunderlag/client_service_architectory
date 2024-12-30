@@ -8,6 +8,17 @@ import hashlib
 import asyncio
 import time
 
+def delete_message(chat_id, message_id):
+    try:
+        bot.delete_message(chat_id, message_id)
+    except telebot.apihelper.ApiTelegramException as e:
+        if e.error_code == 400 and "message to delete not found" in e.description:
+            logger.warning(f"Message {message_id} not found, it might have already been deleted.")
+        else:
+            logger.error(f"Error deleting message {message_id}: {e}", exc_info=True)
+    except Exception as e:
+        logger.error(f"Error deleting message {message_id}: {e}", exc_info=True)
+
 # Проверка, решал ли пользователь этот вопрос раньше
 def has_user_answered_question(user_id, question_id):
     connection = create_connection()
@@ -50,7 +61,6 @@ user_questions = {}
 user_complaints = {}
 user_messages = {}
 MAX_MESSAGES_TO_DELETE = 100
-user_cache = {}
 
 # Обработчик команды /start
 @bot.message_handler(commands=['start'])
@@ -71,7 +81,7 @@ def delete_message(chat_id, message_id):
     try:
         bot.delete_message(chat_id, message_id)
     except Exception as e:
-        logger.error(f"Error deleting message {message_id} for chat {chat_id}: {e}", exc_info=True)
+        logger.error(f"Error deleting message {message_id}: {e}", exc_info=True)
 
 def delete_last_message(chat_id):
     if chat_id in user_messages and user_messages[chat_id]:
@@ -934,8 +944,8 @@ def handle_categories(call):
         delete_all_messages(call.message.chat.id)  # Удаляем все сообщения перед отображением категорий
         send_message(call.message.chat.id, "Выберите категорию:", reply_markup=generate_categories_markup())
     except Exception as e:
-        logger.error(f"Error in handle_categories for user {call.from_user.id}: {e}", exc_info=True)
-        send_message(call.message.chat.id, "Произошла ошибка при обработке категорий. Пожалуйста, попробуйте снова.")
+        logger.error(f"Error in handle_categories: {e}", exc_info=True)
+        send_message(call.message.chat.id, "Произошла ошибка. Пожалуйста, попробуйте снова.")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('toggle_'))
 def handle_toggle_setting(call):
@@ -956,9 +966,8 @@ def handle_back_to_main_menu(call):
         delete_all_messages(chat_id)
         send_message(chat_id, "<B>Айтишечка Квиз Бот</B>\nДобро пожаловать бот работает в тестовом режиме:", reply_markup=generate_inline_main_menu(), parse_mode="html")
     except Exception as e:
-        logger.error(f"Error in handle_back_to_main_menu for user {call.from_user.id}: {e}", exc_info=True)
-        send_message(chat_id, "Произошла ошибка при возврате в главное меню. Пожалуйста, попробуйте снова.")
-        
+        logger.error(f"Error in handle_back_to_main_menu: {e}", exc_info=True)
+        send_message(chat_id, "Произошла ошибка. Пожалуйста, попробуйте снова.")
 def set_user_category(user_id, category_id):
     try:
         connection = create_connection()
@@ -1062,11 +1071,9 @@ while True:
         if e.error_code == 409:
             logger.error("Conflict detected: another bot instance is running. Exiting.")
             break
-        elif e.error_code == 429:
-            logger.warning("Rate limit exceeded. Waiting before retrying.")
-            time.sleep(5)  # Спим перед повторной попыткой
         else:
             logger.error(f"Bot polling error: {e}", exc_info=True)
             time.sleep(0.25)
     except Exception as e:
         logger.error(f"Bot polling error: {e}", exc_info=True)
+        time.sleep(0.25)
